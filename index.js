@@ -1,8 +1,9 @@
+// @ts-nocheck
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion } = require("mongodb");
-
+const { ObjectId } = require("mongodb");
 // Load environment variables
 dotenv.config();
 
@@ -38,6 +39,25 @@ async function run() {
       res.send(parcels);
     });
 
+    //  get all parcel or parcel by  by user (created_by)
+    app.get("/parcels", async (req, res) => {
+      try {
+        const email = req.query.email;
+        const query = email ? { created_by: email } : {}; // Optional filter
+
+        const parcels = await parcelsCollection
+          .find(query)
+          .sort({ creation_date: -1 }) // Newest first
+          .toArray();
+
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error getting parcels:", error);
+        res.status(500).send({ error: "Failed to fetch parcels" });
+      }
+    });
+
+    // post api create a new parcel
     app.post("/parcels", async (req, res) => {
       try {
         const newParcel = req.body;
@@ -57,6 +77,23 @@ async function run() {
       } catch (error) {
         console.error("❌ Failed to insert parcel:", error);
         res.status(500).send({ message: "Failed to add parcel" });
+      }
+    });
+
+    // DELETE a parcel by ID
+    app.delete("/parcels/:id", async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+
+        const result = await parcelsCollection.deleteOne({
+          _id: new ObjectId(parcelId),
+        });
+        res.send(result);
+      } catch (error) {
+        console.error("❌ Error deleting parcel:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Internal server error" });
       }
     });
   } catch (error) {
