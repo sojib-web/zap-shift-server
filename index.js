@@ -107,42 +107,64 @@ async function run() {
       }
     });
 
-    // Save Payment
-    // app.post("/payments", async (req, res) => {
-    //   const { email, parcelId, transactionId, amount, paymentMethod } =
-    //     req.body;
-    //   if (!email || !parcelId || !transactionId || !amount || !paymentMethod) {
-    //     return res.status(400).send({ error: "Missing fields" });
-    //   }
+    // Save Payment and update parcel status
+    app.post("/payments", async (req, res) => {
+      const { email, parcelId, transactionId, amount, paymentMethod } =
+        req.body;
 
-    //   const paymentDoc = {
-    //     email,
-    //     parcelId,
-    //     transactionId,
-    //     amount,
-    //     paymentMethod,
-    //     paidAt: new Date(),
-    //   };
+      const paymentDoc = {
+        email,
+        parcelId,
+        transactionId,
+        amount,
+        paymentMethod,
+        paidAt: new Date(),
+        paid_at_string: new Date().toISOString(),
+      };
 
-    //   const result = await paymentsCollection.insertOne(paymentDoc);
+      try {
+        const paymentRes = await paymentsCollection.insertOne(paymentDoc);
 
-    //   await parcelsCollection.updateOne(
-    //     { _id: new ObjectId(parcelId) },
-    //     { $set: { payment_status: "paid" } }
-    //   );
+        const updateRes = await parcelsCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: { payment_status: "paid" } }
+        );
 
-    //   res.send({ message: "Payment recorded", insertedId: result.insertedId });
-    // });
+        if (updateRes.modifiedCount === 0) {
+          return res
+            .status(404)
+            .send({ error: "Payment inserted, but parcel not updated" });
+        }
 
-    // Get Payments
-    // app.get("/payments", async (req, res) => {
-    //   const email = req.query.email;
-    //   const result = await paymentsCollection
-    //     .find(email ? { email } : {})
-    //     .sort({ paidAt: -1 })
-    //     .toArray();
-    //   res.send(result);
-    // });
+        res.send({
+          message: "Payment saved and parcel marked as paid",
+          insertedId: paymentRes.insertedId,
+        });
+      } catch (err) {
+        console.error("Payment Save Error:", err);
+        res.status(500).send({ error: "Failed to save payment" });
+      }
+    });
+
+    app.get("/payments", async (req, res) => {
+      try {
+        const userEmail = req.query.email;
+        const query = userEmail ? { email: userEmail } : {};
+
+        const options = {
+          sort: { paidAt: -1 }, // latest payments first
+        };
+
+        const payments = await paymentsCollection
+          .find(query, options)
+          .toArray();
+
+        res.send(payments);
+      } catch (error) {
+        console.error("❌ Failed to fetch payments:", error);
+        res.status(500).send({ message: "Failed to fetch payment history" });
+      }
+    });
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error);
   }
