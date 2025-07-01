@@ -62,8 +62,8 @@ async function run() {
     });
 
     app.get("/parcels/:id", async (req, res) => {
-      const id = req.params.id;
       try {
+        const id = req.params.id;
         const parcel = await parcelsCollection.findOne({
           _id: new ObjectId(id),
         });
@@ -90,109 +90,59 @@ async function run() {
       }
     });
 
-    // ✅ Stripe payment intent create
-    // ✅ POST /create-payment-intent
+    // ✅ Create Stripe Payment Intent
     app.post("/create-payment-intent", async (req, res) => {
       const { amount } = req.body;
-
-      // 🔐 Validation check
-      if (
-        !amount ||
-        typeof amount !== "number" ||
-        isNaN(amount) ||
-        amount <= 0
-      ) {
-        console.error("❌ Invalid amount:", amount);
-        return res.status(400).send({ error: "Invalid amount provided" });
-      }
-
       try {
-        console.log("✅ Creating payment intent for amount:", amount);
-
         const paymentIntent = await stripe.paymentIntents.create({
-          amount, // amount must be in cents
+          amount,
           currency: "usd",
           payment_method_types: ["card"],
         });
 
-        console.log("✅ PaymentIntent created:", paymentIntent.id);
-
-        res.send({ client_secret: paymentIntent.client_secret });
-      } catch (error) {
-        console.error("❌ Payment intent creation error:", error.message);
-        res.status(500).send({ error: error.message });
+        res.json({ clientSecret: paymentIntent.client_secret });
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).send({ error: err.message });
       }
     });
 
-    app.post("/payments", async (req, res) => {
-      try {
-        const { email, parcelId, transactionId, amount, paymentMethod } =
-          req.body;
+    // Save Payment
+    // app.post("/payments", async (req, res) => {
+    //   const { email, parcelId, transactionId, amount, paymentMethod } =
+    //     req.body;
+    //   if (!email || !parcelId || !transactionId || !amount || !paymentMethod) {
+    //     return res.status(400).send({ error: "Missing fields" });
+    //   }
 
-        if (
-          !email ||
-          !parcelId ||
-          !transactionId ||
-          !amount ||
-          !paymentMethod
-        ) {
-          return res.status(400).send({ error: "Missing payment data" });
-        }
+    //   const paymentDoc = {
+    //     email,
+    //     parcelId,
+    //     transactionId,
+    //     amount,
+    //     paymentMethod,
+    //     paidAt: new Date(),
+    //   };
 
-        if (!ObjectId.isValid(parcelId)) {
-          return res.status(400).send({ error: "Invalid parcel ID" });
-        }
+    //   const result = await paymentsCollection.insertOne(paymentDoc);
 
-        const paymentDoc = {
-          email,
-          parcelId,
-          transactionId,
-          amount,
-          paymentMethod,
-          paid_at_string: new Date().toISOString(),
-          paidAt: new Date(),
-        };
+    //   await parcelsCollection.updateOne(
+    //     { _id: new ObjectId(parcelId) },
+    //     { $set: { payment_status: "paid" } }
+    //   );
 
-        console.log("Saving payment:", paymentDoc);
+    //   res.send({ message: "Payment recorded", insertedId: result.insertedId });
+    // });
 
-        const result = await paymentsCollection.insertOne(paymentDoc);
-
-        const updateResult = await parcelsCollection.updateOne(
-          { _id: new ObjectId(parcelId) },
-          { $set: { payment_status: "paid" } }
-        );
-
-        if (updateResult.modifiedCount === 0) {
-          return res.status(404).send({ error: "Parcel not found" });
-        }
-
-        res.send({
-          message: "Payment saved & parcel marked as paid",
-          insertedId: result.insertedId,
-        });
-      } catch (error) {
-        console.error("Payment save error:", error);
-        res
-          .status(500)
-          .send({ error: error.message || "Failed to save payment" });
-      }
-    });
-
-    app.get("/payments", async (req, res) => {
-      try {
-        const email = req.query.email;
-        const query = email ? { email } : {};
-        const payments = await paymentsCollection
-          .find(query)
-          .sort({ paidAt: -1 })
-          .toArray();
-
-        res.send(payments);
-      } catch (error) {
-        console.error("Payment history fetch error:", error);
-        res.status(500).send({ error: "Failed to fetch payments" });
-      }
-    });
+    // Get Payments
+    // app.get("/payments", async (req, res) => {
+    //   const email = req.query.email;
+    //   const result = await paymentsCollection
+    //     .find(email ? { email } : {})
+    //     .sort({ paidAt: -1 })
+    //     .toArray();
+    //   res.send(result);
+    // });
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error);
   }
