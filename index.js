@@ -4,7 +4,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
-dotenv.config(); // .env থেকে config লোড
+dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -12,7 +12,6 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// ✅ Stripe ঠিকভাবে initialize করা হচ্ছে
 const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_KEY);
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.r355ogr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -34,6 +33,7 @@ async function run() {
     const parcelsCollection = db.collection("parcels");
     const paymentsCollection = db.collection("payments");
 
+    // 📦 Get all parcels or filter by user
     app.get("/parcels", async (req, res) => {
       const email = req.query.email;
       const query = email ? { created_by: email } : {};
@@ -44,6 +44,7 @@ async function run() {
       res.send(parcels);
     });
 
+    // ➕ Add new parcel
     app.post("/parcels", async (req, res) => {
       try {
         const newParcel = req.body;
@@ -61,6 +62,7 @@ async function run() {
       }
     });
 
+    // 🧾 Get single parcel by ID
     app.get("/parcels/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -77,6 +79,36 @@ async function run() {
       }
     });
 
+    // 🛠️ Update parcel by ID
+    // PATCH /parcels/:id — Update parcel
+    app.patch("/parcels/:id", async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+        const updatedData = req.body;
+
+        // Remove immutable fields if sent accidentally
+        delete updatedData._id;
+        delete updatedData.created_by;
+        delete updatedData.tracking_id;
+        delete updatedData.creation_date;
+
+        const result = await parcelsCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: updatedData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Parcel not found" });
+        }
+
+        res.send({ message: "Parcel updated successfully" });
+      } catch (error) {
+        console.error("❌ Update failed:", error);
+        res.status(500).send({ message: "Failed to update parcel" });
+      }
+    });
+
+    // ❌ Delete parcel
     app.delete("/parcels/:id", async (req, res) => {
       try {
         const parcelId = req.params.id;
@@ -90,7 +122,7 @@ async function run() {
       }
     });
 
-    // ✅ Create Stripe Payment Intent
+    // 💳 Stripe Payment Intent
     app.post("/create-payment-intent", async (req, res) => {
       const { amount } = req.body;
       try {
@@ -107,56 +139,68 @@ async function run() {
       }
     });
 
-    // Save Payment and update parcel status
+    // 💰 Save payment & update parcel
     app.post("/payments", async (req, res) => {
-      const { email, parcelId, transactionId, amount, paymentMethod } =
-        req.body;
-
-      const paymentDoc = {
-        email,
-        parcelId,
-        transactionId,
-        amount,
-        paymentMethod,
-        paidAt: new Date(),
-        paid_at_string: new Date().toISOString(),
-      };
-
       try {
-        const paymentRes = await paymentsCollection.insertOne(paymentDoc);
+        const { parcelId, email, amount, paymentMethod, transactionId } =
+          req.body;
 
-        const updateRes = await parcelsCollection.updateOne(
-          { _id: new ObjectId(parcelId) },
-          { $set: { payment_status: "paid" } }
-        );
-
-        if (updateRes.modifiedCount === 0) {
+        // Prevent duplicate payments
+        const alreadyPaid = await paymentsCollection.findOne({ transactionId });
+        if (alreadyPaid) {
           return res
-            .status(404)
-            .send({ error: "Payment inserted, but parcel not updated" });
+            .status(409)
+            .send({ message: "Duplicate transaction. Already paid." });
         }
 
-        res.send({
-          message: "Payment saved and parcel marked as paid",
-          insertedId: paymentRes.insertedId,
+        // 1. Update parcel payment status
+        const updateResult = await parcelsCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: {
+              delivery_status: "paid",
+              payment_status: "paid",
+            },
+          }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Parcel not found or already paid" });
+        }
+
+        // 2. Insert payment record
+        const paymentDoc = {
+          parcelId,
+          email,
+          amount,
+          paymentMethod,
+          transactionId,
+          paid_at_string: new Date().toISOString(),
+          paid_at: new Date(),
+        };
+
+        const paymentResult = await paymentsCollection.insertOne(paymentDoc);
+
+        res.status(201).send({
+          message: "Payment recorded and parcel marked as paid",
+          insertedId: paymentResult.insertedId,
         });
-      } catch (err) {
-        console.error("Payment Save Error:", err);
-        res.status(500).send({ error: "Failed to save payment" });
+      } catch (error) {
+        console.error("❌ Payment processing failed:", error);
+        res.status(500).send({ message: "Failed to record payment" });
       }
     });
 
+    // 📃 Get payment history (user or all)
     app.get("/payments", async (req, res) => {
       try {
         const userEmail = req.query.email;
         const query = userEmail ? { email: userEmail } : {};
-
-        const options = {
-          sort: { paidAt: -1 }, // latest payments first
-        };
-
         const payments = await paymentsCollection
-          .find(query, options)
+          .find(query)
+          .sort({ paid_at: -1 })
           .toArray();
 
         res.send(payments);
