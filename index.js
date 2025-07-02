@@ -197,13 +197,24 @@ async function run() {
     app.get("/payments", async (req, res) => {
       try {
         const userEmail = req.query.email;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
         const query = userEmail ? { email: userEmail } : {};
-        const payments = await paymentsCollection
+
+        // Get paginated payments
+        const data = await paymentsCollection
           .find(query)
           .sort({ paid_at: -1 })
+          .skip(skip)
+          .limit(limit)
           .toArray();
 
-        res.send(payments);
+        // Get total count for pagination
+        const total = await paymentsCollection.countDocuments(query);
+
+        res.send({ data, total });
       } catch (error) {
         console.error("❌ Failed to fetch payments:", error);
         res.status(500).send({ message: "Failed to fetch payment history" });
