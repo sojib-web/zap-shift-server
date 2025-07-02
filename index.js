@@ -32,6 +32,7 @@ async function run() {
     const db = client.db("parcelDelivery");
     const parcelsCollection = db.collection("parcels");
     const paymentsCollection = db.collection("payments");
+    const trackingCollection = db.collection("tracking_updates");
 
     // 📦 Get all parcels or filter by user
     app.get("/parcels", async (req, res) => {
@@ -79,7 +80,6 @@ async function run() {
       }
     });
 
-    // 🛠️ Update parcel by ID
     // PATCH /parcels/:id — Update parcel
     app.patch("/parcels/:id", async (req, res) => {
       try {
@@ -119,6 +119,34 @@ async function run() {
       } catch (error) {
         console.error("Error deleting parcel:", error);
         res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
+    // 🛰️ Add tracking info
+    app.post("/tracking", async (req, res) => {
+      try {
+        const {
+          tracking_id,
+          parcelId,
+          status,
+          message,
+          updated_by = "",
+        } = req.body;
+
+        const trackingInfo = {
+          tracking_id,
+          parcelId,
+          status,
+          message,
+          updated_by,
+          timestamp: new Date(),
+        };
+
+        const result = await trackingCollection.insertOne(trackingInfo);
+        res.send(result);
+      } catch (err) {
+        console.error("Failed to add tracking info:", err);
+        res.status(500).send({ message: "Internal Server Error" });
       }
     });
 
