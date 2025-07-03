@@ -33,16 +33,66 @@ async function run() {
     const parcelsCollection = db.collection("parcels");
     const paymentsCollection = db.collection("payments");
     const trackingCollection = db.collection("tracking_updates");
+    const usersCollection = db.collection("users"); // ✅ New users collection
+
+    // ✅ Register new user
+    app.post("/api/users", async (req, res) => {
+      try {
+        const user = req.body;
+
+        if (!user || !user.email) {
+          return res.status(400).send({ message: "Invalid user data" });
+        }
+
+        // Prevent duplicate registration
+        const existingUser = await usersCollection.findOne({
+          email: user.email,
+        });
+        if (existingUser) {
+          return res.status(409).send({ message: "User already exists" });
+        }
+
+        const result = await usersCollection.insertOne({
+          ...user,
+          role: user.role || "user",
+          createdAt: new Date(),
+        });
+
+        res.status(201).send({
+          message: "User registered successfully",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("❌ Failed to register user:", error);
+        res.status(500).send({ message: "Failed to register user" });
+      }
+    });
 
     // 📦 Get all parcels or filter by user
     app.get("/parcels", async (req, res) => {
-      const email = req.query.email;
-      const query = email ? { created_by: email } : {};
-      const parcels = await parcelsCollection
-        .find(query)
-        .sort({ creation_date: -1 })
-        .toArray();
-      res.send(parcels);
+      try {
+        const email = req.query.email;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const query = email ? { created_by: email } : {};
+
+        const [total, parcels] = await Promise.all([
+          parcelsCollection.countDocuments(query),
+          parcelsCollection
+            .find(query)
+            .sort({ creation_date: -1 })
+            .skip(skip)
+            .limit(limit)
+            .toArray(),
+        ]);
+
+        res.send({ parcels, total });
+      } catch (err) {
+        console.error("Failed to fetch parcels", err);
+        res.status(500).send({ error: "Internal server error" });
+      }
     });
 
     // ➕ Add new parcel
@@ -80,13 +130,12 @@ async function run() {
       }
     });
 
-    // PATCH /parcels/:id — Update parcel
+    // ✏️ Update parcel
     app.patch("/parcels/:id", async (req, res) => {
       try {
         const parcelId = req.params.id;
         const updatedData = req.body;
 
-        // Remove immutable fields if sent accidentally
         delete updatedData._id;
         delete updatedData.created_by;
         delete updatedData.tracking_id;
@@ -173,7 +222,6 @@ async function run() {
         const { parcelId, email, amount, paymentMethod, transactionId } =
           req.body;
 
-        // Prevent duplicate payments
         const alreadyPaid = await paymentsCollection.findOne({ transactionId });
         if (alreadyPaid) {
           return res
@@ -181,15 +229,9 @@ async function run() {
             .send({ message: "Duplicate transaction. Already paid." });
         }
 
-        // 1. Update parcel payment status
         const updateResult = await parcelsCollection.updateOne(
           { _id: new ObjectId(parcelId) },
-          {
-            $set: {
-              delivery_status: "paid",
-              payment_status: "paid",
-            },
-          }
+          { $set: { delivery_status: "paid", payment_status: "paid" } }
         );
 
         if (updateResult.modifiedCount === 0) {
@@ -198,7 +240,6 @@ async function run() {
             .send({ message: "Parcel not found or already paid" });
         }
 
-        // 2. Insert payment record
         const paymentDoc = {
           parcelId,
           email,
@@ -221,7 +262,7 @@ async function run() {
       }
     });
 
-    // 📃 Get payment history (user or all)
+    // 📃 Get payment history
     app.get("/payments", async (req, res) => {
       try {
         const userEmail = req.query.email;
@@ -231,7 +272,6 @@ async function run() {
 
         const query = userEmail ? { email: userEmail } : {};
 
-        // Get paginated payments
         const data = await paymentsCollection
           .find(query)
           .sort({ paid_at: -1 })
@@ -239,7 +279,6 @@ async function run() {
           .limit(limit)
           .toArray();
 
-        // Get total count for pagination
         const total = await paymentsCollection.countDocuments(query);
 
         res.send({ data, total });
