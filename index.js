@@ -36,15 +36,16 @@ async function run() {
     const usersCollection = db.collection("users"); // ✅ New users collection
 
     // ✅ Register new user
-    app.post("/api/users", async (req, res) => {
+    app.post("/users", async (req, res) => {
       try {
         const user = req.body;
 
-        if (!user || !user.email) {
+        // Validate user input
+        if (!user || !user.email || !user.name || !user.photo) {
           return res.status(400).send({ message: "Invalid user data" });
         }
 
-        // Prevent duplicate registration
+        // Check for existing user
         const existingUser = await usersCollection.findOne({
           email: user.email,
         });
@@ -52,11 +53,17 @@ async function run() {
           return res.status(409).send({ message: "User already exists" });
         }
 
-        const result = await usersCollection.insertOne({
-          ...user,
-          role: user.role || "user",
-          createdAt: new Date(),
-        });
+        // Insert new user with default role "user" if not provided
+        const newUser = {
+          name: user.name,
+          email: user.email,
+          photo: user.photo,
+          role: user.role || "user", // ✅ Set default role
+          createdAt: new Date().toISOString(),
+          last_log_in: new Date().toISOString(),
+        };
+
+        const result = await usersCollection.insertOne(newUser);
 
         res.status(201).send({
           message: "User registered successfully",
