@@ -1,10 +1,12 @@
 // @ts-nocheck
+const dotenv = require("dotenv");
+dotenv.config(); // ✅ Load environment variables before anything else
+
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
+const admin = require("firebase-admin");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
-dotenv.config();
+const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_KEY); // ✅ Stripe key is now properly loaded
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -12,7 +14,11 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_KEY);
+const serviceAccount = require("./firebase_admin_sdk.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.r355ogr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -24,6 +30,23 @@ const client = new MongoClient(uri, {
   },
 });
 
+const verifyFBToken = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header) return res.status(401).send({ message: "Unauthorized access" });
+
+  const token = header.split(" ")[1];
+  if (!token) return res.status(401).send({ message: "Unauthorized access" });
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.user = decodedToken;
+    next();
+  } catch (error) {
+    console.error("❌ Token verification failed:", error);
+    return res.status(403).send({ message: "Forbidden access" });
+  }
+};
+
 async function run() {
   try {
     await client.connect();
@@ -33,19 +56,17 @@ async function run() {
     const parcelsCollection = db.collection("parcels");
     const paymentsCollection = db.collection("payments");
     const trackingCollection = db.collection("tracking_updates");
-    const usersCollection = db.collection("users"); // ✅ New users collection
+    const usersCollection = db.collection("users");
+    const ridersCollection = db.collection("riders");
+    // ========== ROUTES ==========
 
-    // ✅ Register new user
     app.post("/users", async (req, res) => {
       try {
         const user = req.body;
-
-        // Validate user input
-        if (!user || !user.email || !user.name || !user.photo) {
+        if (!user?.email || !user?.name || !user?.photo) {
           return res.status(400).send({ message: "Invalid user data" });
         }
 
-        // Check for existing user
         const existingUser = await usersCollection.findOne({
           email: user.email,
         });
@@ -53,18 +74,16 @@ async function run() {
           return res.status(409).send({ message: "User already exists" });
         }
 
-        // Insert new user with default role "user" if not provided
         const newUser = {
           name: user.name,
           email: user.email,
           photo: user.photo,
-          role: user.role || "user", // ✅ Set default role
+          role: user.role || "user",
           createdAt: new Date().toISOString(),
           last_log_in: new Date().toISOString(),
         };
 
         const result = await usersCollection.insertOne(newUser);
-
         res.status(201).send({
           message: "User registered successfully",
           insertedId: result.insertedId,
@@ -75,14 +94,10 @@ async function run() {
       }
     });
 
-    // 📦 Get all parcels or filter by user
-    app.get("/parcels", async (req, res) => {
+    app.get("/parcels", verifyFBToken, async (req, res) => {
       try {
-        const email = req.query.email;
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const skip = (page - 1) * limit;
-
+        const { email, page = 1, limit = 10 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
         const query = email ? { created_by: email } : {};
 
         const [total, parcels] = await Promise.all([
@@ -91,7 +106,7 @@ async function run() {
             .find(query)
             .sort({ creation_date: -1 })
             .skip(skip)
-            .limit(limit)
+            .limit(parseInt(limit))
             .toArray(),
         ]);
 
@@ -102,7 +117,6 @@ async function run() {
       }
     });
 
-    // ➕ Add new parcel
     app.post("/parcels", async (req, res) => {
       try {
         const newParcel = req.body;
@@ -120,16 +134,13 @@ async function run() {
       }
     });
 
-    // 🧾 Get single parcel by ID
     app.get("/parcels/:id", async (req, res) => {
       try {
-        const id = req.params.id;
         const parcel = await parcelsCollection.findOne({
-          _id: new ObjectId(id),
+          _id: new ObjectId(req.params.id),
         });
-        if (!parcel) {
+        if (!parcel)
           return res.status(404).json({ message: "Parcel not found" });
-        }
         res.json(parcel);
       } catch (error) {
         console.error("Error fetching parcel:", error);
@@ -137,19 +148,16 @@ async function run() {
       }
     });
 
-    // ✏️ Update parcel
     app.patch("/parcels/:id", async (req, res) => {
       try {
-        const parcelId = req.params.id;
         const updatedData = req.body;
-
         delete updatedData._id;
         delete updatedData.created_by;
         delete updatedData.tracking_id;
         delete updatedData.creation_date;
 
         const result = await parcelsCollection.updateOne(
-          { _id: new ObjectId(parcelId) },
+          { _id: new ObjectId(req.params.id) },
           { $set: updatedData }
         );
 
@@ -164,12 +172,10 @@ async function run() {
       }
     });
 
-    // ❌ Delete parcel
     app.delete("/parcels/:id", async (req, res) => {
       try {
-        const parcelId = req.params.id;
         const result = await parcelsCollection.deleteOne({
-          _id: new ObjectId(parcelId),
+          _id: new ObjectId(req.params.id),
         });
         res.send(result);
       } catch (error) {
@@ -178,7 +184,6 @@ async function run() {
       }
     });
 
-    // 🛰️ Add tracking info
     app.post("/tracking", async (req, res) => {
       try {
         const {
@@ -188,7 +193,6 @@ async function run() {
           message,
           updated_by = "",
         } = req.body;
-
         const trackingInfo = {
           tracking_id,
           parcelId,
@@ -197,7 +201,6 @@ async function run() {
           updated_by,
           timestamp: new Date(),
         };
-
         const result = await trackingCollection.insertOne(trackingInfo);
         res.send(result);
       } catch (err) {
@@ -206,16 +209,14 @@ async function run() {
       }
     });
 
-    // 💳 Stripe Payment Intent
     app.post("/create-payment-intent", async (req, res) => {
-      const { amount } = req.body;
       try {
+        const { amount } = req.body;
         const paymentIntent = await stripe.paymentIntents.create({
           amount,
           currency: "usd",
           payment_method_types: ["card"],
         });
-
         res.json({ clientSecret: paymentIntent.client_secret });
       } catch (err) {
         console.error(err.message);
@@ -223,29 +224,25 @@ async function run() {
       }
     });
 
-    // 💰 Save payment & update parcel
     app.post("/payments", async (req, res) => {
       try {
         const { parcelId, email, amount, paymentMethod, transactionId } =
           req.body;
 
         const alreadyPaid = await paymentsCollection.findOne({ transactionId });
-        if (alreadyPaid) {
+        if (alreadyPaid)
           return res
             .status(409)
             .send({ message: "Duplicate transaction. Already paid." });
-        }
 
         const updateResult = await parcelsCollection.updateOne(
           { _id: new ObjectId(parcelId) },
           { $set: { delivery_status: "paid", payment_status: "paid" } }
         );
-
-        if (updateResult.modifiedCount === 0) {
+        if (updateResult.modifiedCount === 0)
           return res
             .status(404)
             .send({ message: "Parcel not found or already paid" });
-        }
 
         const paymentDoc = {
           parcelId,
@@ -258,7 +255,6 @@ async function run() {
         };
 
         const paymentResult = await paymentsCollection.insertOne(paymentDoc);
-
         res.status(201).send({
           message: "Payment recorded and parcel marked as paid",
           insertedId: paymentResult.insertedId,
@@ -269,23 +265,24 @@ async function run() {
       }
     });
 
-    // 📃 Get payment history
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", verifyFBToken, async (req, res) => {
       try {
-        const userEmail = req.query.email;
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
-        const skip = (page - 1) * limit;
+        const { email, page = 1, limit = 10 } = req.query;
+        console.log("decoded token:", req.user); // ✅ fixed
 
-        const query = userEmail ? { email: userEmail } : {};
+        if (req.user.email !== email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const query = { email }; // ✅ no need for conditional, already validated
 
         const data = await paymentsCollection
           .find(query)
           .sort({ paid_at: -1 })
           .skip(skip)
-          .limit(limit)
+          .limit(parseInt(limit))
           .toArray();
-
         const total = await paymentsCollection.countDocuments(query);
 
         res.send({ data, total });
@@ -293,6 +290,88 @@ async function run() {
         console.error("❌ Failed to fetch payments:", error);
         res.status(500).send({ message: "Failed to fetch payment history" });
       }
+    });
+
+    // Backend (Express)
+    app.post("/riders", async (req, res) => {
+      const rider = req.body;
+      const result = await ridersCollection.insertOne(rider);
+      res.send(result);
+    });
+
+    // Assuming you're using Express and MongoDB
+    app.get("/riders/pending", async (req, res) => {
+      try {
+        const pendingRiders = await ridersCollection
+          .find({ status: "pending" })
+          .sort({ createdAt: -1 }) // newest first
+          .toArray();
+
+        res.send(pendingRiders);
+      } catch (error) {
+        console.error("Error fetching pending riders:", error);
+        res.status(500).send({ message: "Server Error" });
+      }
+    });
+
+    app.patch("/riders/approve/:id", async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        const result = await ridersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "approved" } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Rider not found" });
+        }
+
+        res.json({ message: "Rider approved successfully" });
+      } catch (error) {
+        console.error("Error approving rider:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    app.delete("/riders/:id", async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        const result = await ridersCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ message: "Rider not found" });
+        }
+
+        res.json({ message: "Rider rejected and deleted successfully" });
+      } catch (error) {
+        console.error("Error rejecting rider:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // GET /riders/approved
+    app.get("/riders/approved", async (req, res) => {
+      const result = await ridersCollection
+        .find({ status: "approved" })
+        .toArray();
+      res.send(result);
+    });
+
+    // PATCH /riders/status/:id
+    app.patch("/riders/status/:id", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+
+      const result = await ridersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
+
+      res.send(result);
     });
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error);
