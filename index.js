@@ -93,8 +93,8 @@ async function run() {
         res.status(500).send({ message: "Failed to register user" });
       }
     });
-
-    app.get("/parcels", verifyFBToken, async (req, res) => {
+    // verifyFBToken add korte  hobe
+    app.get("/parcels", async (req, res) => {
       try {
         const { email, page = 1, limit = 10 } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -265,6 +265,8 @@ async function run() {
       }
     });
 
+    // verifyFBToken add korte hobe
+
     app.get("/payments", verifyFBToken, async (req, res) => {
       try {
         const { email, page = 1, limit = 10 } = req.query;
@@ -308,9 +310,9 @@ async function run() {
         res.status(500).json({ message: "Failed to create rider" });
       }
     });
-
+    // verifyFBToken add korte hobe
     // ✅ Get all pending riders (sorted by newest)
-    app.get("/riders/pending", verifyFBToken, async (req, res) => {
+    app.get("/riders/pending", async (req, res) => {
       try {
         const pendingRiders = await ridersCollection
           .find({ status: "pending" })
@@ -323,9 +325,9 @@ async function run() {
         res.status(500).json({ message: "Server Error" });
       }
     });
-
+    // verifyFBToken add korte hobe
     // ✅ Get all approved riders
-    app.get("/riders/approved", verifyFBToken, async (req, res) => {
+    app.get("/riders/approved", async (req, res) => {
       try {
         const result = await ridersCollection
           .find({ status: "active" })
@@ -338,29 +340,25 @@ async function run() {
       }
     });
     // Update rider status (approve, deactivate, etc.)
+    // verifyFBToken add korte hobe
     app.patch("/riders/status/:id", async (req, res) => {
       const id = req.params.id;
-      const { status } = req.body;
+      const { status, email } = req.body;
 
-      try {
-        const result = await ridersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status } }
-        );
+      const result = await ridersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status } }
+      );
 
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ message: "Rider not found" });
-        }
-
-        res.status(200).json({ message: `Rider status updated to ${status}` });
-      } catch (error) {
-        console.error("Error updating rider status:", error);
-        res.status(500).json({ message: "Internal server error" });
+      if (status === "active" && email) {
+        await usersCollection.updateOne({ email }, { $set: { role: "rider" } });
       }
-    });
 
+      res.send({ message: "Status updated" });
+    });
+    // verifyFBToken add korte hobe
     // ✅ Update rider status (approve, activate, deactivate) + assign role
-    app.patch("/riders/status/:id", verifyFBToken, async (req, res) => {
+    app.patch("/riders/status/:id", async (req, res) => {
       const id = req.params.id;
       const { status, email } = req.body;
 
@@ -389,9 +387,9 @@ async function run() {
         res.status(500).json({ message: "Internal server error" });
       }
     });
-
+    // verifyFBToken add korte hobe
     // ✅ Delete a rider (rejection)
-    app.delete("/riders/:id", verifyFBToken, async (req, res) => {
+    app.delete("/riders/:id", async (req, res) => {
       const id = req.params.id;
 
       try {
