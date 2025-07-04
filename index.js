@@ -292,49 +292,106 @@ async function run() {
       }
     });
 
-    // Backend (Express)
+    // ✅ Create a new rider (no token required)
     app.post("/riders", async (req, res) => {
-      const rider = req.body;
-      const result = await ridersCollection.insertOne(rider);
-      res.send(result);
-    });
+      const rider = {
+        ...req.body,
+        status: "pending",
+        createdAt: new Date(),
+      };
 
-    // Assuming you're using Express and MongoDB
-    app.get("/riders/pending", async (req, res) => {
       try {
-        const pendingRiders = await ridersCollection
-          .find({ status: "pending" })
-          .sort({ createdAt: -1 }) // newest first
-          .toArray();
-
-        res.send(pendingRiders);
+        const result = await ridersCollection.insertOne(rider);
+        res.status(201).json(result);
       } catch (error) {
-        console.error("Error fetching pending riders:", error);
-        res.status(500).send({ message: "Server Error" });
+        console.error("Insert error:", error);
+        res.status(500).json({ message: "Failed to create rider" });
       }
     });
 
-    app.patch("/riders/approve/:id", async (req, res) => {
+    // ✅ Get all pending riders (sorted by newest)
+    app.get("/riders/pending", verifyFBToken, async (req, res) => {
+      try {
+        const pendingRiders = await ridersCollection
+          .find({ status: "pending" })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.status(200).json(pendingRiders);
+      } catch (error) {
+        console.error("Error fetching pending riders:", error);
+        res.status(500).json({ message: "Server Error" });
+      }
+    });
+
+    // ✅ Get all approved riders
+    app.get("/riders/approved", verifyFBToken, async (req, res) => {
+      try {
+        const result = await ridersCollection
+          .find({ status: "active" })
+          .toArray();
+
+        res.status(200).json(result);
+      } catch (error) {
+        console.error("Error fetching approved riders:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+    // Update rider status (approve, deactivate, etc.)
+    app.patch("/riders/status/:id", async (req, res) => {
       const id = req.params.id;
+      const { status } = req.body;
 
       try {
         const result = await ridersCollection.updateOne(
           { _id: new ObjectId(id) },
-          { $set: { status: "approved" } }
+          { $set: { status } }
         );
 
         if (result.matchedCount === 0) {
           return res.status(404).json({ message: "Rider not found" });
         }
 
-        res.json({ message: "Rider approved successfully" });
+        res.status(200).json({ message: `Rider status updated to ${status}` });
       } catch (error) {
-        console.error("Error approving rider:", error);
+        console.error("Error updating rider status:", error);
         res.status(500).json({ message: "Internal server error" });
       }
     });
 
-    app.delete("/riders/:id", async (req, res) => {
+    // ✅ Update rider status (approve, activate, deactivate) + assign role
+    app.patch("/riders/status/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const { status, email } = req.body;
+
+      try {
+        const result = await ridersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Rider not found" });
+        }
+
+        // Assign rider role if activated
+        if (status === "active" && email) {
+          const roleResult = await usersCollection.updateOne(
+            { email },
+            { $set: { role: "rider" } }
+          );
+          console.log("User role updated:", roleResult.modifiedCount);
+        }
+
+        res.status(200).json({ message: `Rider status updated to ${status}` });
+      } catch (error) {
+        console.error("Error updating rider status:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // ✅ Delete a rider (rejection)
+    app.delete("/riders/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
 
       try {
@@ -346,32 +403,14 @@ async function run() {
           return res.status(404).json({ message: "Rider not found" });
         }
 
-        res.json({ message: "Rider rejected and deleted successfully" });
+        console.log(`Rider with ID ${id} has been rejected and deleted.`);
+        res
+          .status(200)
+          .json({ message: "Rider rejected and deleted successfully" });
       } catch (error) {
         console.error("Error rejecting rider:", error);
         res.status(500).json({ message: "Internal server error" });
       }
-    });
-
-    // GET /riders/approved
-    app.get("/riders/approved", async (req, res) => {
-      const result = await ridersCollection
-        .find({ status: "approved" })
-        .toArray();
-      res.send(result);
-    });
-
-    // PATCH /riders/status/:id
-    app.patch("/riders/status/:id", async (req, res) => {
-      const id = req.params.id;
-      const { status } = req.body;
-
-      const result = await ridersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
-      );
-
-      res.send(result);
     });
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error);
