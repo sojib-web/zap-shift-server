@@ -13,8 +13,8 @@ const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
-
-const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_CONFIG);
+const path = require("path");
+const serviceAccount = require(path.join(__dirname, "config/zap-admin.json"));
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),

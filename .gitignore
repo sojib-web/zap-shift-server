@@ -7,4 +7,5 @@ node_modules/
 .env.*.local
 
 # Firebase credentials file (if separated)
-config/firebase_admin_sdk.json
+config/zap-admin.json
+
