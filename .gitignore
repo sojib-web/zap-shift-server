@@ -1,4 +1,10 @@
 # Node modules
 node_modules/
+
 # Environment variables
 .env
+.env.local
+.env.*.local
+
+# Firebase credentials file (if separated)
+config/firebase_admin_sdk.json
