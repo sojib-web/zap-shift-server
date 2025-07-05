@@ -329,33 +329,33 @@ async function run() {
     // ✅ Get all approved riders
     app.get("/riders/approved", async (req, res) => {
       try {
-        const result = await ridersCollection
-          .find({ status: "active" })
+        const approvedRiders = await ridersCollection
+          .find({ status: "active" }) // ✅ Only active riders
+          .sort({ createdAt: -1 })
           .toArray();
-
-        res.status(200).json(result);
-      } catch (error) {
-        console.error("Error fetching approved riders:", error);
-        res.status(500).json({ message: "Internal server error" });
+        res.send(approvedRiders);
+      } catch (err) {
+        res.status(500).json({ message: "Failed to load riders" });
       }
     });
+
     // Update rider status (approve, deactivate, etc.)
-    // verifyFBToken add korte hobe
-    app.patch("/riders/status/:id", async (req, res) => {
-      const id = req.params.id;
-      const { status, email } = req.body;
+    // // verifyFBToken add korte hobe
+    // app.patch("/riders/status/:id", async (req, res) => {
+    //   const id = req.params.id;
+    //   const { status, email } = req.body;
 
-      const result = await ridersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
-      );
+    //   const result = await ridersCollection.updateOne(
+    //     { _id: new ObjectId(id) },
+    //     { $set: { status } }
+    //   );
 
-      if (status === "active" && email) {
-        await usersCollection.updateOne({ email }, { $set: { role: "rider" } });
-      }
+    //   if (status === "active" && email) {
+    //     await usersCollection.updateOne({ email }, { $set: { role: "rider" } });
+    //   }
 
-      res.send({ message: "Status updated" });
-    });
+    //   res.send({ message: "Status updated" });
+    // });
     // verifyFBToken add korte hobe
     // ✅ Update rider status (approve, activate, deactivate) + assign role
     app.patch("/riders/status/:id", async (req, res) => {
@@ -372,21 +372,23 @@ async function run() {
           return res.status(404).json({ message: "Rider not found" });
         }
 
-        // Assign rider role if activated
         if (status === "active" && email) {
-          const roleResult = await usersCollection.updateOne(
+          await usersCollection.updateOne(
             { email },
             { $set: { role: "rider" } }
           );
-          console.log("User role updated:", roleResult.modifiedCount);
         }
 
-        res.status(200).json({ message: `Rider status updated to ${status}` });
+        res.status(200).json({
+          message: `Rider status updated to ${status}`,
+          modifiedCount: result.modifiedCount,
+        });
       } catch (error) {
         console.error("Error updating rider status:", error);
         res.status(500).json({ message: "Internal server error" });
       }
     });
+
     // verifyFBToken add korte hobe
     // ✅ Delete a rider (rejection)
     app.delete("/riders/:id", async (req, res) => {
