@@ -93,46 +93,36 @@ async function run() {
     });
 
     // Get role by email
-    app.get(
-      "/users/role/:email",
-      // verifyFBToken,
-      async (req, res) => {
-        const emailParam = req.params.email;
-        const user = await usersCollection.findOne({
-          email: { $regex: `^${emailParam}$`, $options: "i" },
-        });
-        if (!user)
-          return res
-            .status(404)
-            .send({ success: false, message: "User not found" });
-        res.send({ success: true, role: user.role ?? "guest" });
-      }
-    );
+    app.get("/users/role/:email", verifyFBToken, async (req, res) => {
+      const emailParam = req.params.email;
+      const user = await usersCollection.findOne({
+        email: { $regex: `^${emailParam}$`, $options: "i" },
+      });
+      if (!user)
+        return res
+          .status(404)
+          .send({ success: false, message: "User not found" });
+      res.send({ success: true, role: user.role ?? "guest" });
+    });
 
     // Search users
-    app.get(
-      "/users/search",
-      //  verifyFBToken, verifyAdmin,
-      async (req, res) => {
-        const { email } = req.query;
-        if (!email || email.trim().length < 2)
-          return res
-            .status(400)
-            .send({ message: "Email query param required" });
-        const regex = new RegExp(email.trim(), "i");
-        const users = await usersCollection
-          .find({ email: { $regex: regex } })
-          .project({ password: 0 })
-          .toArray();
-        res.send(users);
-      }
-    );
+    app.get("/users/search", verifyFBToken, verifyAdmin, async (req, res) => {
+      const { email } = req.query;
+      if (!email || email.trim().length < 2)
+        return res.status(400).send({ message: "Email query param required" });
+      const regex = new RegExp(email.trim(), "i");
+      const users = await usersCollection
+        .find({ email: { $regex: regex } })
+        .project({ password: 0 })
+        .toArray();
+      res.send(users);
+    });
 
     // Update user role
     app.patch(
       "/users/:id/role",
-      // verifyFBToken,
-      // verifyAdmin,
+      verifyFBToken,
+      verifyAdmin,
       async (req, res) => {
         const { id } = req.params;
         const { role } = req.body;
@@ -328,18 +318,35 @@ async function run() {
     });
 
     // Rider: Pending list (admin only)
+    app.get("/riders/pending", verifyFBToken, verifyAdmin, async (req, res) => {
+      try {
+        const pendingRiders = await ridersCollection
+          .find({ status: "pending" })
+          .toArray();
+        res.send(pendingRiders);
+      } catch (error) {
+        console.error("Error fetching pending riders:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
     app.get(
-      "/riders/pending",
-      // verifyFBToken, verifyAdmin,
+      "/riders/approved",
+      verifyFBToken,
+      verifyAdmin,
       async (req, res) => {
         try {
-          const pendingRiders = await ridersCollection
-            .find({ status: "pending" })
+          console.log("👉 req.user:", req.user);
+
+          const approvedRiders = await ridersCollection
+            .find({ status: "active" })
             .toArray();
-          res.send(pendingRiders);
+
+          console.log("✅ Approved Riders found:", approvedRiders.length);
+          res.send(approvedRiders);
         } catch (error) {
-          console.error("Error fetching pending riders:", error);
-          res.status(500).send({ message: "Internal Server Error" });
+          console.error("❌ Error in /riders/approved route:", error.message);
+          res.status(500).send({ error: "Server error occurred" });
         }
       }
     );
@@ -354,24 +361,11 @@ async function run() {
       res.send(rider);
     });
 
-    // Rider: Approved list
-    app.get(
-      "/riders/approved",
-      // verifyFBToken,
-      // verifyAdmin,
-      async (req, res) => {
-        const approvedRiders = await ridersCollection
-          .find({ status: "active" })
-          .toArray();
-        res.send(approvedRiders);
-      }
-    );
-
     // Rider: Update status
     app.patch(
       "/riders/status/:id",
-      // verifyFBToken,
-      // verifyAdmin,
+      verifyFBToken,
+      verifyAdmin,
       async (req, res) => {
         const { id } = req.params;
         if (!ObjectId.isValid(id))
